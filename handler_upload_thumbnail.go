@@ -3,12 +3,36 @@ package main
 import (
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
+	"os"
+	"path/filepath"
+	"slices"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
-	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/database"
 	"github.com/google/uuid"
 )
+
+func getFileExtentionFromContentType(contentType string) (string, error) {
+	supportedExtensions := []string{".jpeg", ".png"}
+
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return "", err
+	}
+	extensions, err := mime.ExtensionsByType(mediaType)
+	if err != nil {
+		return "", err
+	}
+	if len(extensions) != 1 {
+		return "", fmt.Errorf("unexpected number of extensions: %v, expected only 1", extensions)
+	}
+
+	if !slices.Contains(supportedExtensions, extensions[0]) {
+		return "", fmt.Errorf("unsuported image format: %s", extensions[0])
+	}
+	return extensions[0], nil
+}
 
 func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Request) {
 	videoIDString := r.PathValue("videoID")
@@ -39,22 +63,22 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	fileData, fileHeader, err := r.FormFile("thumbnail")
+	imageFileData, imageFileHeader, err := r.FormFile("thumbnail")
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Error getting thumbnail file data", err)
 		return
 	}
-	defer fileData.Close()
+	defer imageFileData.Close()
 
-	mediaType := fileHeader.Header.Get("Content-Type")
+	mediaType := imageFileHeader.Header.Get("Content-Type")
 	if mediaType == "" {
 		respondWithError(w, http.StatusBadRequest, "Missing Content-Type for thumbnail", nil)
 		return
 	}
 
-	imageData, err := io.ReadAll(fileData)
+	fileExtension, err := getFileExtentionFromContentType(mediaType)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Error reading image", err)
+		respondWithError(w, http.StatusBadRequest, "Incorrect media type in content-type header", err)
 		return
 	}
 
@@ -68,12 +92,19 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	videoThumbnails[videoID] = thumbnail{
-		data:      imageData,
-		mediaType: mediaType,
+	filePath := filepath.Join(cfg.assetsRoot, videoIDString+fileExtension)
+	file, err := os.Create(filePath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't create thumbnail file", err)
+		return
+	}
+	_, err = io.Copy(file, imageFileData)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't save thumbnail", err)
+		return
 	}
 
-	thumbnailURL := fmt.Sprintf("http://localhost:%v/api/thumbnails/%v", cfg.port, videoID)
+	thumbnailURL := fmt.Sprintf("http://localhost:%s/%s", cfg.port, filePath)
 	video.ThumbnailURL = &thumbnailURL
 
 	err = cfg.db.UpdateVideo(video)
