@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
 
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/database"
 
 	"github.com/joho/godotenv"
@@ -13,6 +16,7 @@ import (
 
 type apiConfig struct {
 	db               database.Client
+	s3Client         *s3.Client
 	jwtSecret        string
 	platform         string
 	filepathRoot     string
@@ -24,7 +28,10 @@ type apiConfig struct {
 }
 
 func main() {
-	godotenv.Load(".env")
+	err := godotenv.Load(".env")
+	if err != nil {
+		log.Fatalf("Couldn't load .env: %v\n", err)
+	}
 
 	pathToDB := os.Getenv("DB_PATH")
 	if pathToDB == "" {
@@ -71,6 +78,12 @@ func main() {
 		log.Fatal("S3_CF_DISTRO environment variable is not set")
 	}
 
+	awsConfig, err := config.LoadDefaultConfig(context.Background(), config.WithRegion(s3Region))
+	if err != nil {
+		log.Fatalf("Error while loading AWS config: %v\n", err)
+	}
+	awsClinet := s3.NewFromConfig(awsConfig)
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		log.Fatal("PORT environment variable is not set")
@@ -78,6 +91,7 @@ func main() {
 
 	cfg := apiConfig{
 		db:               db,
+		s3Client:         awsClinet,
 		jwtSecret:        jwtSecret,
 		platform:         platform,
 		filepathRoot:     filepathRoot,
@@ -98,7 +112,7 @@ func main() {
 	mux.Handle("/app/", appHandler)
 
 	assetsHandler := http.StripPrefix("/assets", http.FileServer(http.Dir(assetsRoot)))
-	mux.Handle("/assets/", cacheMiddleware(assetsHandler))
+	mux.Handle("/assets/", noCacheMiddleware(assetsHandler))
 
 	mux.HandleFunc("POST /api/login", cfg.handlerLogin)
 	mux.HandleFunc("POST /api/refresh", cfg.handlerRefresh)

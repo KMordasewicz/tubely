@@ -3,36 +3,13 @@ package main
 import (
 	"fmt"
 	"io"
-	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
-	"slices"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
 )
-
-func getFileExtentionFromContentType(contentType string) (string, error) {
-	supportedExtensions := []string{".jpeg", ".png"}
-
-	mediaType, _, err := mime.ParseMediaType(contentType)
-	if err != nil {
-		return "", err
-	}
-	extensions, err := mime.ExtensionsByType(mediaType)
-	if err != nil {
-		return "", err
-	}
-	if len(extensions) != 1 {
-		return "", fmt.Errorf("unexpected number of extensions: %v, expected only 1", extensions)
-	}
-
-	if !slices.Contains(supportedExtensions, extensions[0]) {
-		return "", fmt.Errorf("unsuported image format: %s", extensions[0])
-	}
-	return extensions[0], nil
-}
 
 func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Request) {
 	videoIDString := r.PathValue("videoID")
@@ -56,8 +33,7 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 
 	fmt.Println("uploading thumbnail for video", videoID, "by user", userID)
 
-	const maxMemory = 10 << 20 // 10MB
-	err = r.ParseMultipartForm(maxMemory)
+	err = r.ParseMultipartForm(10 << 20) // 10MB
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Error parsing multi part form", err)
 		return
@@ -76,7 +52,7 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	fileExtension, err := getFileExtentionFromContentType(mediaType)
+	_, ext, err := getFileExtentionFromContentType(mediaType, []string{"jpeg", "png"})
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Incorrect media type in content-type header", err)
 		return
@@ -92,7 +68,12 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	filePath := filepath.Join(cfg.assetsRoot, videoIDString+fileExtension)
+	fileName, err := generateFileName(ext)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't generate thumbnail file name", err)
+		return
+	}
+	filePath := filepath.Join(cfg.assetsRoot, fileName)
 	file, err := os.Create(filePath)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't create thumbnail file", err)
