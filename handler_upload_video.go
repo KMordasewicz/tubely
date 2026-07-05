@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -85,11 +86,18 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	aspectRatio, err := getVideoAspectRatio(tempFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't get file aspect ratio", err)
+		return
+	}
+
 	fileName, err := generateFileName(ext)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't generate file name", err)
 		return
 	}
+	fileName = path.Join(getVideoPrefix(aspectRatio), fileName)
 
 	_, err = cfg.s3Client.PutObject(r.Context(), &s3.PutObjectInput{
 		Bucket:      aws.String(cfg.s3Bucket),
@@ -102,14 +110,9 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	videoURL := fmt.Sprintf(
-		"https://%s.s3.%s.amazonaws.com/%s",
-		cfg.s3Bucket,
-		cfg.s3Region,
-		fileName,
-	)
-
+	videoURL := cfg.getVideoURL(fileName)
 	video.VideoURL = &videoURL
+
 	err = cfg.db.UpdateVideo(video)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Could't update video metadata", err)
