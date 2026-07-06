@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
+	"os"
 	"os/exec"
 )
 
@@ -117,7 +119,7 @@ func getVideoAspectRatio(filePath string) (string, error) {
 		filePath,
 	)
 
-	resultsBuffer := bytes.Buffer{}
+	var resultsBuffer bytes.Buffer
 	cmd.Stdout = &resultsBuffer
 
 	err := cmd.Run()
@@ -128,6 +130,10 @@ func getVideoAspectRatio(filePath string) (string, error) {
 	var ffprobeResult FFprobeOutput
 	if err = json.Unmarshal(resultsBuffer.Bytes(), &ffprobeResult); err != nil {
 		return "", fmt.Errorf("error unmarshaling ffprobe output: %v", err)
+	}
+
+	if len(ffprobeResult.Streams) == 0 {
+		return "", errors.New("no video streams found")
 	}
 
 	return calcAspectRatio(ffprobeResult.Streams[0].Width, ffprobeResult.Streams[0].Height), nil
@@ -142,4 +148,37 @@ func getVideoPrefix(aspectRatio string) string {
 	default:
 		return "other"
 	}
+}
+
+func processVideoForFastStart(filePath string) (string, error) {
+	newFilePath := filePath + ".processing"
+
+	cmd := exec.Command(
+		"ffmpeg",
+		"-i",
+		filePath,
+		"-c",
+		"copy",
+		"-movflags",
+		"faststart",
+		"-f",
+		"mp4",
+		newFilePath,
+	)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("error running ffmpeg command: %s %v", stderr.String(), err)
+	}
+
+	fileInfo, err := os.Stat(newFilePath)
+	if err != nil {
+		return "", fmt.Errorf("could not stat processed file: %v", err)
+	}
+	if fileInfo.Size() == 0 {
+		return "", fmt.Errorf("processed file is empty")
+	}
+
+	return newFilePath, nil
 }
