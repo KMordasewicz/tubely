@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
 	"log"
 	"mime"
 	"slices"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
 func getFileExtentionFromContentType(contentType string, allowedExtentions []string) (mediaType, extention string, err error) {
@@ -44,4 +48,21 @@ func generateFileName(ext string) (string, error) {
 	}
 
 	return base64.RawURLEncoding.EncodeToString(nameBytes) + ext, nil
+}
+
+func generatePresignedURL(s3Client *s3.Client, bucket, key string, expireTime time.Duration) (string, error) {
+	presignedClient := s3.NewPresignClient(s3Client)
+	presignedRequest, err := presignedClient.PresignGetObject(
+		context.Background(),
+		&s3.GetObjectInput{
+			Bucket: &bucket,
+			Key:    &key,
+		},
+		s3.WithPresignExpires(expireTime),
+	)
+	if err != nil {
+		return "", err
+	}
+
+	return presignedRequest.URL, nil
 }
